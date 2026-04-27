@@ -30,6 +30,12 @@ SECRET_KEY = env('SECRET_KEY')
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = env('DEBUG')
 
+# Music platforms vars
+# Spotify
+SPOTIFY_CLIENT_ID = env("SPOTIFY_CLIENT_ID")
+SPOTIFY_CLIENT_SECRET = env("SPOTIFY_CLIENT_SECRET")
+SPOTIFY_REDIRECT_URI = env("SPOTIFY_REDIRECT_URI")
+
 ALLOWED_HOSTS = []
 
 
