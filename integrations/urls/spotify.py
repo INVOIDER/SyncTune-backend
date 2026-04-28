@@ -1,5 +1,5 @@
 from django.urls import path
-from ..views import SpotifyAuthStartView, SpotifyCallbackView
+from integrations.views.spotify import SpotifyAuthStartView, SpotifyCallbackView
 
 urlpatterns = [
     path("connect/", SpotifyAuthStartView.as_view()),

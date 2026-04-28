@@ -21,6 +21,13 @@ load_dotenv()
 def env(name, default=None):
     return os.getenv(name, default)
 
+
+def env_bool(name, default=False):
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
 
@@ -28,13 +35,15 @@ def env(name, default=None):
 SECRET_KEY = env('SECRET_KEY')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = env('DEBUG')
+DEBUG = env_bool('DEBUG', False)
 
 # Music platforms vars
+DATABASE_SCHEMA = env("DB_SCHEMA", "music_sync")
 # Spotify
 SPOTIFY_CLIENT_ID = env("SPOTIFY_CLIENT_ID")
 SPOTIFY_CLIENT_SECRET = env("SPOTIFY_CLIENT_SECRET")
 SPOTIFY_REDIRECT_URI = env("SPOTIFY_REDIRECT_URI")
+MUSIC_TOKEN_ENCRYPTION_KEY = env("MUSIC_TOKEN_ENCRYPTION_KEY")
 
 ALLOWED_HOSTS = []
 
@@ -47,12 +56,14 @@ INSTALLED_APPS = [
     'django.contrib.contenttypes',
     'django.contrib.sessions',
     'django.contrib.messages',
+    'django.contrib.postgres',
     'django.contrib.staticfiles',
 
     'rest_framework',
     "rest_framework_simplejwt",
     "rest_framework_simplejwt.token_blacklist",
-    'users'
+    'users',
+    'integrations.apps.IntegrationsConfig',
 ]
 AUTH_USER_MODEL = "users.User"
 
@@ -121,6 +132,9 @@ DATABASES = {
         "PASSWORD": env("DB_PASSWORD"),
         "HOST": env("DB_HOST", "localhost"),
         "PORT": env("DB_PORT", "6432"),
+        "OPTIONS": {
+            "options": f"-c search_path={DATABASE_SCHEMA}",
+        },
     }
 }
 
