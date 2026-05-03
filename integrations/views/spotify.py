@@ -9,18 +9,25 @@ from integrations.security import encrypt_token
 from integrations.services.spotify import SpotifyAPIError, SpotifyService
 
 User = get_user_model()
+PROVIDER_CODE = "spotify"
 
 
 class SpotifyAuthStartView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        if not MusicProvider.objects.filter(code=PROVIDER_CODE, is_active=True).exists():
+            return Response(
+                {"detail": "Spotify provider is not configured or is inactive."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         service = SpotifyService()
         url, state = service.get_authorization_url()
 
         request.session["oauth_state"] = state
         request.session["oauth_user_id"] = str(request.user.pk)
-        request.session["oauth_provider"] = "spotify"
+        request.session["oauth_provider"] = PROVIDER_CODE
 
         return Response({"auth_url": url})
 
@@ -41,13 +48,21 @@ class SpotifyCallbackView(APIView):
 
         if not code:
             return Response({"detail": "Authorization code is required."}, status=status.HTTP_400_BAD_REQUEST)
-        if not expected_state or state != expected_state or provider_code != "spotify":
+        if not expected_state or state != expected_state or provider_code != PROVIDER_CODE:
             return Response({"detail": "Invalid OAuth state."}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
             user = User.objects.get(pk=user_id)
         except User.DoesNotExist:
             return Response({"detail": "OAuth session user was not found."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            provider = MusicProvider.objects.get(code=PROVIDER_CODE, is_active=True)
+        except MusicProvider.DoesNotExist:
+            return Response(
+                {"detail": "Spotify provider is not configured or is inactive."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         service = SpotifyService()
         try:
@@ -63,16 +78,6 @@ class SpotifyCallbackView(APIView):
                 },
                 status=response_status,
             )
-
-        provider, _ = MusicProvider.objects.get_or_create(
-            code="spotify",
-            defaults={
-                "name": "Spotify",
-                "api_base_url": "https://api.spotify.com/v1",
-                "supports_oauth": True,
-                "is_active": True,
-            },
-        )
 
         account, _ = ExternalAccount.objects.update_or_create(
             user=user,
@@ -92,6 +97,6 @@ class SpotifyCallbackView(APIView):
 
         return Response({
             "status": "connected",
-            "provider": "spotify",
+            "provider": PROVIDER_CODE,
             "external_account_id": str(account.id),
         })
