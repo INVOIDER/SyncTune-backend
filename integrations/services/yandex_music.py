@@ -1,3 +1,5 @@
+import re
+
 from yandex_music import Client
 from yandex_music.exceptions import YandexMusicError
 
@@ -13,6 +15,7 @@ class YandexMusicAPIError(Exception):
 
 class YandexMusicService(BaseMusicService):
     provider_code = "yandex_music"
+    WRONG_REVISION_RE = re.compile(r"actual revision:\s*(\d+)", re.IGNORECASE)
 
     API_BASE_URL = "https://api.music.yandex.net"
     TOKEN_HELP_URL = (
@@ -67,9 +70,9 @@ class YandexMusicService(BaseMusicService):
         playlists = self._call_yandex_music(client.users_playlists_list, user_id=user_id)
         return [self._playlist_to_dto(playlist) for playlist in playlists or []]
 
-    def get_playlist_tracks(self, token, playlist_kind, user_id=None):
+    def get_playlist_tracks(self, token, playlist_id, user_id=None):
         client = self.build_client(token)
-        playlist = self._call_yandex_music(client.users_playlists, playlist_kind, user_id=user_id)
+        playlist = self._call_yandex_music(client.users_playlists, playlist_id, user_id=user_id)
         track_items = getattr(playlist, "tracks", None) or []
         return [self._track_short_to_dto(track_item, position) for position, track_item in enumerate(track_items, start=1)]
 
@@ -89,30 +92,112 @@ class YandexMusicService(BaseMusicService):
         )
         return self._playlist_to_dto(playlist)
 
-    def add_track_to_playlist(self, token, playlist_kind, track_id, album_id, position=0, revision=1, user_id=None):
+    def add_track_to_playlist(
+        self,
+        token,
+        playlist_id,
+        track_id,
+        album_id=None,
+        position=0,
+        revision=None,
+        user_id=None,
+    ):
         client = self.build_client(token)
-        playlist = self._call_yandex_music(
+        revision = revision or self._get_playlist_revision(client, playlist_id, user_id=user_id)
+
+        try:
+            playlist = self._insert_track_to_playlist(
+                client,
+                playlist_id,
+                track_id,
+                album_id,
+                position=position,
+                revision=revision,
+                user_id=user_id,
+            )
+        except YandexMusicAPIError as exc:
+            actual_revision = self._actual_revision_from_error(exc)
+            if actual_revision is None:
+                raise
+
+            playlist = self._insert_track_to_playlist(
+                client,
+                playlist_id,
+                track_id,
+                album_id,
+                position=position,
+                revision=actual_revision,
+                user_id=user_id,
+            )
+        return self._playlist_to_dto(playlist)
+
+    def _insert_track_to_playlist(
+        self,
+        client,
+        playlist_id,
+        track_id,
+        album_id,
+        position=0,
+        revision=None,
+        user_id=None,
+    ):
+        return self._call_yandex_music(
             client.users_playlists_insert_track,
-            playlist_kind,
+            playlist_id,
             track_id,
             album_id,
             at=position,
             revision=revision,
             user_id=user_id,
         )
+
+    def remove_track_from_playlist(
+        self,
+        token,
+        playlist_id,
+        track_id,
+        album_id=None,
+        position=None,
+        revision=None,
+        user_id=None,
+    ):
+        if position is None:
+            raise YandexMusicAPIError(400, "Yandex Music requires track position to remove it from a playlist.")
+
+        client = self.build_client(token)
+        revision = revision or self._get_playlist_revision(client, playlist_id, user_id=user_id)
+
+        try:
+            playlist = self._delete_track_from_playlist(
+                client,
+                playlist_id,
+                position,
+                revision=revision,
+                user_id=user_id,
+            )
+        except YandexMusicAPIError as exc:
+            actual_revision = self._actual_revision_from_error(exc)
+            if actual_revision is None:
+                raise
+
+            playlist = self._delete_track_from_playlist(
+                client,
+                playlist_id,
+                position,
+                revision=actual_revision,
+                user_id=user_id,
+            )
         return self._playlist_to_dto(playlist)
 
-    def remove_track_from_playlist(self, token, playlist_kind, from_position, to_position, revision=1, user_id=None):
-        client = self.build_client(token)
-        playlist = self._call_yandex_music(
+    def _delete_track_from_playlist(self, client, playlist_id, position, revision=None, user_id=None):
+        return self._call_yandex_music(
             client.users_playlists_delete_track,
-            playlist_kind,
-            from_position,
-            to_position,
+            playlist_id,
+            position,
+            position + 1,
             revision=revision,
             user_id=user_id,
         )
-        return self._playlist_to_dto(playlist)
 
     def normalize_token(self, token):
         value = token.strip()
@@ -126,6 +211,21 @@ class YandexMusicService(BaseMusicService):
             return func(*args, **kwargs)
         except YandexMusicError as exc:
             raise YandexMusicAPIError(400, str(exc)) from exc
+
+    def _get_playlist_revision(self, client, playlist_id, user_id=None):
+        playlist = self._call_yandex_music(client.users_playlists, playlist_id, user_id=user_id)
+        return getattr(playlist, "revision", None) or 1
+
+    def _actual_revision_from_error(self, exc):
+        message = str(exc)
+        if "wrong-revision" not in message:
+            return None
+
+        match = self.WRONG_REVISION_RE.search(message)
+        if not match:
+            return None
+
+        return int(match.group(1))
 
     def _playlist_to_dto(self, playlist):
         return {
@@ -149,12 +249,16 @@ class YandexMusicService(BaseMusicService):
         first_album = albums[0] if albums else None
         artists = getattr(track, "artists", None) or []
         title = getattr(track, "title", None)
+        artist_names = [getattr(artist, "name", None) for artist in artists]
+        artist_names = [name for name in artist_names if name]
 
         return {
             "external_track_id": str(getattr(track, "id", "")),
+            "external_album_id": str(album_id or getattr(first_album, "id", "") or ""),
             "album_id": str(album_id or getattr(first_album, "id", "") or ""),
             "title": title,
-            "artist": ", ".join(filter(None, [getattr(artist, "name", None) for artist in artists])),
+            "artist": ", ".join(artist_names),
+            "artists": artist_names,
             "album": getattr(first_album, "title", None),
             "duration_ms": getattr(track, "duration_ms", None),
             "isrc": None,
