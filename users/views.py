@@ -7,7 +7,13 @@ from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
-from .serializers import RegisterSerializer, LoginSerializer, UserPublicSerializer
+from .serializers import (
+    DeleteAccountSerializer,
+    LoginSerializer,
+    RegisterSerializer,
+    UserProfileUpdateSerializer,
+    UserPublicSerializer,
+)
 
 
 class RegisterView(APIView):
@@ -73,3 +79,35 @@ class MeView(APIView):
 
     def get(self, request):
         return Response(UserPublicSerializer(request.user).data)
+
+    def patch(self, request):
+        serializer = UserProfileUpdateSerializer(
+            request.user,
+            data=request.data,
+            partial=True,
+        )
+        serializer.is_valid(raise_exception=True)
+        user = serializer.save()
+
+        return Response(UserPublicSerializer(user).data)
+
+    def put(self, request):
+        serializer = UserProfileUpdateSerializer(
+            request.user,
+            data=request.data,
+        )
+        serializer.is_valid(raise_exception=True)
+        user = serializer.save()
+
+        return Response(UserPublicSerializer(user).data)
+
+    def delete(self, request):
+        serializer = DeleteAccountSerializer(
+            data=request.data,
+            context={"request": request},
+        )
+        serializer.is_valid(raise_exception=True)
+
+        request.user.delete()
+
+        return Response(status=status.HTTP_204_NO_CONTENT)
